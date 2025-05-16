@@ -9,6 +9,8 @@ import matplotlib.pyplot as plt
 import cv2
 import numpy as np
 from collections import Counter
+import numpy as _np
+from collections import Counter as _Counter
 
 def get_most_frequent_color(image):
     # Reshape to list of RGB tuples
@@ -71,12 +73,15 @@ def check_background_in_mask(image, mask):
 
 
 class SegmentationDataset(Dataset):
-    def __init__(self, image_dir, json_dir, transform=None, image_size=(512, 512), class_file="classes.txt"):
+    def __init__(self, image_dir, json_dir, transform=None, image_size=(512, 512), class_file="classes.txt", weights_file='pesi.txt'):
+        
         self.image_dir = image_dir
         self.json_dir = json_dir
         self.image_size = image_size
         self.transform = transform
         self.class_file = class_file
+        self.weights_file = weights_file
+        # compute or load class weights
 
         self.image_files = [f for f in os.listdir(image_dir) if f.endswith('.png')]
 
@@ -85,6 +90,32 @@ class SegmentationDataset(Dataset):
         self.class_to_idx["background"] = 0  # background sempre 0
         self.idx_to_class = {v: k for k, v in self.class_to_idx.items()}
         self.num_classes = len(self.idx_to_class)
+        self.class_weights = self.calcolaPesi()
+
+    def calcolaPesi(self):
+        """
+        Carica i pesi da weights_file o li calcola iterando sul dataset.
+        """
+        # se il file esiste, carica e restituisce
+        if os.path.exists(self.weights_file):
+            vals = np.loadtxt(self.weights_file, dtype=np.float32)
+            return torch.tensor(vals)
+        # altrimenti calcola
+        counter = Counter()
+        for i in range(len(self)):
+            _, mask = self[i]
+            vals, cnts = mask.unique(return_counts=True)
+            for v, c in zip(vals.tolist(), cnts.tolist()):
+                counter[int(v)] += int(c)
+        total = sum(counter.values())
+        weights = np.zeros(self.num_classes, dtype=np.float32)
+        for cls in range(self.num_classes):
+            cnt = counter.get(cls, 0)
+            weights[cls] = (total / cnt) if cnt > 0 else 0.0
+        weights = weights / weights.sum()
+        np.savetxt(self.weights_file, weights, fmt="%.6f")
+        return torch.tensor(weights)
+
 
     def _build_class_list(self):
         if os.path.exists(self.class_file):

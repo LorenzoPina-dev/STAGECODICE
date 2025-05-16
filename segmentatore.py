@@ -24,7 +24,7 @@ gc.collect()
 
 image_dir = "./immaginihsifoodCannon"
 json_dir = "./label"
-batch_size = 16
+batch_size = 8
 multispectral = True
 input_channels = 4 if multispectral else 3
 image_size = 224
@@ -91,7 +91,7 @@ if __name__ == "__main__":
     criterion = nn.CrossEntropyLoss()
     optimizer = CustomAdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
     if train:
-        manager = ManageCNN(device, model, train_loader, val_loader, lr=5e-4, wd=1e-4)
+        manager = ManageCNN(device, model, train_loader, val_loader, lr=5e-4, wd=1e-4,weight=dataset.class_weights)
     # manager.visualizzaSegmentazione()
         totAcc_train, totAcc_test = manager.learn(200, verbose=True)
         manager.save('segmenter.pth')
@@ -101,7 +101,7 @@ if __name__ == "__main__":
         plt.legend()
         plt.show()
     else:
-         manager=ManageCNN.load('segmenter.pth',device,model,train_loader,val_loader)
+         manager=ManageCNN.load('segmenter.pth',device,model,train_loader,val_loader,weight=dataset.class_weights)
 
     # Valutazione
     y_pred, y_true = manager.get_predictions(train=False)

@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import torchvision.transforms.functional as F
 
 class ManageCNN:
-    def __init__(self, device, model, train_loader, test_loader, lr=1e-3, wd=1e-4):
+    def __init__(self, device, model, train_loader, test_loader, lr=1e-3, wd=1e-4,weight=None):
         self.device = device
         self.model=model
         self.train_loader = train_loader
@@ -19,20 +19,22 @@ class ManageCNN:
         self.optimizer = CustomAdamW(model.parameters(), lr=lr, weight_decay=wd)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', patience=20, factor=0.5)
         self.patient=50
+        self.weight=weight
+        self.weight=self.weight.to(self.device, non_blocking=True)
+        self.criterion = nn.CrossEntropyLoss(weight=self.weight)
 
 
     def learn(self, num_epochs, verbose=True):
-        criterion = nn.CrossEntropyLoss(ignore_index=0)
         acc_train, acc_test = [], []
-        self.best_acc=2
+        self.best_acc=1000
         self.epochs_no_improve=0
         for epoch in range(num_epochs):
-            loss = self._train_epoch(criterion)
+            loss = self._train_epoch()
             precTrain=self._get_accuracy(train=True)
             precTest=self._get_accuracy(train=False)
             acc_train.append(precTrain)
             acc_test.append(precTest)
-            test_loss=self._get_validation_loss(criterion)
+            test_loss=self._get_validation_loss()
             if self.checkOverfit(test_loss):
                 return acc_train, acc_test
             self.epoch+=1
@@ -41,7 +43,7 @@ class ManageCNN:
                       f'Train Acc: {acc_train[-1]:.2f}% | Test Acc: {acc_test[-1]:.2f}% |test loss: {test_loss:.4f}')
         return acc_train, acc_test
     
-    def _get_validation_loss(self, criterion):
+    def _get_validation_loss(self):
         self.model.eval()
         total_loss = 0.0
         with torch.no_grad():
@@ -51,12 +53,12 @@ class ManageCNN:
                 outputs = self.model(inputs)
                 if isinstance(outputs, dict) and 'out' in outputs:
                     outputs = outputs['out']
-                loss = criterion(outputs, labels)
+                loss = self.criterion(outputs, labels)
                 total_loss += loss.item()
         return total_loss / len(self.test_loader)
 
 
-    def _train_epoch(self, criterion):
+    def _train_epoch(self):
         self.model.train()
         total_loss = 0.0
         batch_idx=0
@@ -78,7 +80,7 @@ class ManageCNN:
             outputs = self.model(inputs)
             if isinstance(outputs, dict) and 'out' in outputs:
                 outputs = outputs['out']
-            loss = criterion(outputs, labels)
+            loss = self.criterion(outputs, labels)
             loss.backward()
             self.optimizer.step()
             #self.scaler.scale(loss).backward()
