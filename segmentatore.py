@@ -3,6 +3,7 @@ import torch
 from torch.utils.data import DataLoader, random_split
 import torch_directml
 from torchvision.models.segmentation import deeplabv3_resnet50
+from torchvision import models
 import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
@@ -15,6 +16,10 @@ from gestioneCNN.ManageCNN import ManageCNN
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import gc
 import numpy as np
+import segmentation_models_pytorch as smp
+
+
+
 gc.collect()
 
 image_dir = "./immaginihsifoodCannon"
@@ -23,16 +28,17 @@ batch_size = 16
 multispectral = True
 input_channels = 4 if multispectral else 3
 image_size = 224
+train=True
 
 
 def get_transforms():
     
     train_transform = A.Compose([
         A.Resize(image_size, image_size),
-        A.HorizontalFlip(p=1),
-        A.VerticalFlip(p=1),
-        A.Affine(scale=(0.75, 1.25), p=0.5),
-        #A.GaussianBlur(blur_limit=(3, 3), sigma_limit=(0.1, 2.0)),
+       # A.HorizontalFlip(p=1),
+       # A.VerticalFlip(p=1),
+        #A.Affine(scale=(0.75, 1.25), p=0.5),
+        A.GaussianBlur(blur_limit=(3, 3), sigma_limit=(0.1, 2.0)),
         A.Normalize(mean=[0.5]*input_channels, std=[0.5]*input_channels),
         ToTensorV2(),
     ], additional_targets={'mask': 'mask'})
@@ -70,35 +76,61 @@ if __name__ == "__main__":
     pin_memory=False)
 
     # Modello
-    model = deeplabv3_resnet50(weights=None, num_classes=dataset.num_classes)
-    model = model.to(device)
+    model = models.segmentation.fcn_resnet50(weights=None, num_classes=dataset.num_classes)
+    '''model = smp.FPN(
+            encoder_name="resnet18",      # Backbone
+            classes=dataset.num_classes,
+            activation=None,
+        )
+        '''
+    model=model.to(device)
+    for param in model.parameters():
+        param.requires_grad = True
 
     # Ottimizzatore e Loss
     criterion = nn.CrossEntropyLoss()
     optimizer = CustomAdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
-    
-    manager = ManageCNN(device, model, train_loader, val_loader, lr=5e-4, wd=1e-4)
-    manager.visualizzaSegmentazione()
-    totAcc_train, totAcc_test = manager.learn(200, verbose=True)
-    manager.save('segmenter.pth')
-    # Plotting
-    plt.plot(totAcc_test, label="Test Accuracy")
-    plt.plot(totAcc_train, label="Train Accuracy")
-    plt.legend()
-    plt.show()
-
+    if train:
+        manager = ManageCNN(device, model, train_loader, val_loader, lr=5e-4, wd=1e-4)
+    # manager.visualizzaSegmentazione()
+        totAcc_train, totAcc_test = manager.learn(200, verbose=True)
+        manager.save('segmenter.pth')
+        # Plotting
+        plt.plot(totAcc_test, label="Test Accuracy")
+        plt.plot(totAcc_train, label="Train Accuracy")
+        plt.legend()
+        plt.show()
+    else:
+         manager=ManageCNN.load('segmenter.pth',device,model,train_loader,val_loader)
 
     # Valutazione
     y_pred, y_true = manager.get_predictions(train=False)
-    y_pred_np = np.array(y_pred)
-    y_true_np = np.array(y_true)
-    print(f"accuracy: {(y_pred_np == y_true_np).sum()/len(y_true)*100}")
-    cm = confusion_matrix(y_pred_np, y_true_np, normalize='true') * 100
-    ConfusionMatrixDisplay(cm, display_labels=dataset.classes).plot(values_format=".0f",cmap="Blues")
+    y_pred_np = np.array(y_pred).flatten()
+    y_true_np = np.array(y_true).flatten()
+    print(f"accuracy: {manager._get_accuracy(train=False)}")
+    labels = np.unique(np.concatenate((y_true_np, y_pred_np)))
+
+    # Compute the confusion matrix with explicit labels
+    cm = confusion_matrix(y_true_np, y_pred_np, labels=labels, normalize='true') * 100
+
+    # Trova le classi con accuratezza più bassa (diagonale della CM)
+    accuracies = np.diag(cm)
+    worst_class_indices = np.argsort(accuracies)[:20]  # ad es. le 20 peggiori
+
+    # Filtra la CM e le label
+    filtered_cm = cm[worst_class_indices][:, worst_class_indices]
+    filtered_labels = [dataset.classes[i] for i in worst_class_indices]
+
+    # Visualizza
+    ConfusionMatrixDisplay(confusion_matrix=filtered_cm, display_labels=filtered_labels).plot(
+            values_format=".0f", cmap="Blues", xticks_rotation=90
+            )
+    plt.tight_layout()
+    plt.show()
+    manager.show_segmentations()
     plt.show()
 
-
-
+'''
     train_tf, val_tf = get_transforms()
     dataset = SegmentationDataset(image_dir, json_dir, transform=train_tf)
     train_size = int(0.75 * len(dataset)*0.50)
@@ -122,15 +154,18 @@ if __name__ == "__main__":
     # Ottimizzatore e Loss
     criterion = nn.CrossEntropyLoss()
     optimizer = CustomAdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
-    
-    manager = ManageCNN(device, model, train_loader, val_loader, lr=5e-4, wd=1e-4)
-    totAcc_train, totAcc_test = manager.learn(200, verbose=True)
-    manager.save('modello_ottimizzato.pth')
-    # Plotting
-    plt.plot(totAcc_test, label="Test Accuracy")
-    plt.plot(totAcc_train, label="Train Accuracy")
-    plt.legend()
-    plt.show()
+    if train:
+        manager = ManageCNN(device, model, train_loader, val_loader, lr=5e-4, wd=1e-4)
+        totAcc_train, totAcc_test = manager.learn(200, verbose=True)
+        manager.save('modello_ottimizzato.pth')
+        # Plotting
+        plt.plot(totAcc_test, label="Test Accuracy")
+        plt.plot(totAcc_train, label="Train Accuracy")
+        plt.legend()
+        plt.show()
+    else:
+        manager=ManageCNN.load('modello_ottimizzato.pth',device,model,train_loader,val_loader)
+
     
     y_pred, y_true = manager.get_predictions(train=False)
     y_pred_np = np.array(y_pred).flatten()
@@ -139,7 +174,7 @@ if __name__ == "__main__":
     y_pred, y_true = manager.get_predictions(train=False)
     cm = confusion_matrix(y_true_np, y_pred_np, normalize='true') * 100
     ConfusionMatrixDisplay(cm, display_labels=dataset.classes).plot(values_format=".0f",cmap="Blues")
-'''
+''''''
     train_tf, val_tf = get_transforms()
     dataset = SegmentationDataset(image_dir, json_dir, transform=train_tf)
     train_size = int(0.75 * len(dataset)*0.50)

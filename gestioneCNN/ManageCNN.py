@@ -3,10 +3,10 @@ import torch.nn as nn
 from torch.amp import GradScaler, autocast
 from gestioneCNN.CustomAdamW import CustomAdamW
 import copy
-import numpy as np
-import matplotlib.pyplot as plt
 #from torch.profiler import profile, record_function, ProfilerActivity, tensorboard_trace_handler
 
+import matplotlib.pyplot as plt
+import torchvision.transforms.functional as F
 
 class ManageCNN:
     def __init__(self, device, model, train_loader, test_loader, lr=1e-3, wd=1e-4):
@@ -33,8 +33,6 @@ class ManageCNN:
             acc_train.append(precTrain)
             acc_test.append(precTest)
             test_loss=self._get_validation_loss(criterion)
-            if self.epoch % 20==0:
-                self.visualizzaSegmentazione()
             if self.checkOverfit(test_loss):
                 return acc_train, acc_test
             self.epoch+=1
@@ -48,11 +46,8 @@ class ManageCNN:
         total_loss = 0.0
         with torch.no_grad():
             for inputs, labels in self.test_loader:
-                unique_vals = np.unique(labels)
-
                 inputs = inputs.to(self.device, non_blocking=True)
                 labels = labels.to(self.device, non_blocking=True)
-                
                 outputs = self.model(inputs)
                 if isinstance(outputs, dict) and 'out' in outputs:
                     outputs = outputs['out']
@@ -97,7 +92,43 @@ class ManageCNN:
             #    break 
 
         return total_loss / len(self.train_loader)
-    
+
+    def show_segmentations(self, num_images=3):
+        self.model.eval()
+        images_shown = 0
+
+        with torch.no_grad():
+            for inputs, labels in self.test_loader:
+                inputs = inputs.to(self.device)
+                labels = labels.to(self.device)
+
+                outputs = self.model(inputs)
+                if isinstance(outputs, dict) and 'out' in outputs:
+                    outputs = outputs['out']
+                
+                preds = torch.argmax(outputs, dim=1)
+
+                for i in range(min(num_images, inputs.size(0))):
+                    img = inputs[i].cpu()
+                    pred = preds[i].cpu()
+                    label = labels[i].cpu()
+
+                    fig, axs = plt.subplots(1, 3, figsize=(12, 4))
+                    axs[0].imshow(F.to_pil_image(img))
+                    axs[0].set_title("Input")
+                    axs[1].imshow(pred, cmap="jet")
+                    axs[1].set_title("Predizione")
+                    axs[2].imshow(label, cmap="jet")
+                    axs[2].set_title("Ground Truth")
+                    for ax in axs:
+                        ax.axis('off')
+                    plt.tight_layout()
+                    plt.show()
+
+                    images_shown += 1
+                    if images_shown >= num_images:
+                        return
+
     def checkOverfit(self,acc):
             # Scheduler (val_loss opzionale se usi ReduceLROnPlateau)
         if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
@@ -136,45 +167,6 @@ class ManageCNN:
                 correct += (preds == labels).sum().item()
                 total += labels.numel()
         return 100 * correct / total
-    
-    def visualizzaSegmentazione(self):
-        self.model.eval()
-        with torch.no_grad():
-            # Prendi una sola immagine dal test set
-            sample_img, sample_mask = next(iter(self.test_loader))
-            sample_img = sample_img.to(self.device)
-            sample_mask = sample_mask.to(self.device)
-
-            output = self.model(sample_img)
-            if isinstance(output, dict):
-                output = output["out"]
-            pred = torch.argmax(output, dim=1)
-
-            # Converti per plotting (usa solo il primo della batch)
-            img_np = sample_img[0].cpu().permute(1, 2, 0).numpy()
-            mask_np = sample_mask[0].cpu().numpy()
-            pred_np = pred[0].cpu().numpy()
-
-            # Normalizza immagine se necessario
-            img_np = (img_np - img_np.min()) / (img_np.max() - img_np.min() + 1e-5)
-
-            fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-
-            axs[0].imshow(img_np)
-            axs[0].set_title("Immagine originale")
-            axs[0].axis("off")
-
-            axs[1].imshow((np.flip(np.transpose(mask_np, (1, 0)) , axis=0)), cmap='jet')
-            axs[1].set_title("Maschera ground truth")
-            axs[1].axis("off")
-
-            axs[2].imshow(pred_np, cmap='jet')
-            axs[2].set_title(f"Predizione epoca {self.epoch + 1}")
-            axs[2].axis("off")
-
-            plt.tight_layout()
-            plt.show()
-
     
     def save(self, path):
         """
